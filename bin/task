@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+
+const path = require('path');
+const fs = require('fs');
+const { TaskService } = require('../lib/task-service');
+
+const CONFIG_PATH = path.join(process.env.HOME, '.config', 'clawd', 'task-manager.json');
+let config = {};
+try {
+  config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+} catch (_) {}
+
+const dataDir = config.dataDir || path.join(__dirname, '..', 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+const service = new TaskService(dataDir);
+
+function printHelp() {
+  console.log(`clawd-task – Task Manager CLI
+
+Usage: clawd-task <command> [options]
+
+Commands:
+  init                     Initialize data directory
+  create <title> [--desc DESC] [--due DATE] [--owner AGENT] [--priority LEVEL] [--tags TAG1,TAG2]
+  list [--status STATUS] [--owner AGENT]
+  show <id>
+  update <id> [--title TITLE] [--status STATUS] [--due DATE]
+  complete <id>
+  delete <id>
+  export [--format json|jsonl] > file
+`);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const cmd = args.shift();
+  if (!cmd) { printHelp(); process.exit(0); }
+  switch (cmd) {
+    case 'init':
+      console.log('Data directory initialized at', dataDir);
+      break;
+    case 'create': {
+      const title = args.shift();
+      if (!title) { console.error('Title required'); process.exit(1); }
+      const opts = {};
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--desc') opts.description = args[++i];
+        else if (args[i] === '--due') opts.due = args[++i];
+        else if (args[i] === '--owner') opts.owner = args[++i];
+        else if (args[i] === '--priority') opts.priority = args[++i];
+        else if (args[i] === '--tags') opts.tags = args[++i].split(',');
+      }
+      const task = await service.create({ title, ...opts });
+      console.log('Created task', task.id);
+      break;
+    }
+    case 'list': {
+      const filter = {};
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--status') filter.status = args[++i];
+        else if (args[i] === '--owner') filter.owner = args[++i];
+      }
+      const tasks = await service.find(filter);
+      console.table(tasks.map(t => ({ id: t.id, title: t.title, status: t.status, due: t.due })));
+      break;
+    }
+    case 'show': {
+      const id = args[0];
+      const task = await service.get(id);
+      console.dir(task, { depth: null });
+      break;
+    }
+    case 'update': {
+      const id = args.shift();
+      const updates = {};
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--title') updates.title = args[++i];
+        else if (args[i] === '--status') updates.status = args[++i];
+        else if (args[i] === '--due') updates.due = args[++i];
+        else if (args[i] === '--owner') updates.owner = args[++i];
+        else if (args[i] === '--priority') updates.priority = args[++i];
+        else if (args[i] === '--tags') updates.tags = args[++i].split(',');
+      }
+      await service.update(id, updates);
+      console.log('Updated', id);
+      break;
+    }
+    case 'complete': {
+      const id = args[0];
+      await service.complete(id);
+      console.log('Completed', id);
+      break;
+    }
+    case 'delete': {
+      const id = args[0];
+      await service.delete(id);
+      console.log('Deleted', id);
+      break;
+    }
+    case 'export': {
+      const format = args.includes('--format') ? args[args.indexOf('--format') + 1] : 'json';
+      const data = await service.export(format);
+      process.stdout.write(JSON.stringify(data, null, 2));
+      break;
+    }
+    default:
+      console.error('Unknown command');
+      printHelp();
+      process.exit(1);
+  }
+}
+
+main().catch(err => { console.error(err); process.exit(1); });
